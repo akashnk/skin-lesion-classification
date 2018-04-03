@@ -1,4 +1,4 @@
-derm_data = read.table("/media/Omega/Development/R/New/Dermatology/dermatology.data.txt" , header = FALSE , sep = ",")
+derm_data = read.table("/media/Omega/Development/R/New/Dermatology/dataset/dermatology.data.txt" , header = FALSE , sep = ",")
 derm_data <- derm_data[,c(1:33,35)]
 
 colnames(derm_data) <- c("erythema",
@@ -150,7 +150,7 @@ model_glm
 set.seed(42)
 model_derm <- caret::train(classes ~ .,
                          data = train_data,
-                         method = "derm",
+                         method = "rf",
                          preProcess = c("scale", "center"),
                          na.action=na.exclude,
                          trControl = trainControl(method = "repeatedcv", 
@@ -203,3 +203,83 @@ ggplot(results, aes(x = prediction, y = seboreic_dermatitis, color = correct, sh
   geom_jitter(size = 3, alpha = 0.6)
 
 
+# Feature Selection
+library(corrplot)
+
+# calculate correlation matrix
+corMatMy <- cor(train_data[, -1])
+corrplot(corMatMy, order = "hclust")
+
+# Remove highly correleated data
+#Apply correlation filter at 0.70,
+highlyCor <- colnames(train_data[, -1])[findCorrelation(corMatMy, cutoff = 0.7, verbose = TRUE)]
+highlyCor
+#then we remove these variables
+train_data_cor <- train_data[, which(!colnames(train_data) %in% highlyCor)]
+test_data_cor <- test_data[, which(!colnames(train_data) %in% highlyCor)]
+
+#Genetic algorithm feature selection
+set.seed(27)
+model_ga <- gafs(x = train_data[, -1], 
+                 y = train_data$classes,
+                 iters = 10, # generations of algorithm
+                 popSize = 10, # population size for each generation
+                 levels = c("psoriasis", "seboreic_dermatitis","lichen_planus","pityriasis_rosea","chronic_dermatitis", "pityriasis_rubra_pilaris"),
+                 gafsControl = gafsControl(functions = rfGA, # Assess fitness with RF
+                                           method = "cv",    # 10 fold cross validation
+                                           genParallel = TRUE, # Use parallel programming
+                                           allowParallel = TRUE))
+
+model_dermcor <- caret::train(classes ~ .,
+                           data = train_data_cor,
+                           method = "rf",
+                           preProcess = c("scale", "center"),
+                           na.action=na.exclude,
+                           trControl = trainControl(method = "repeatedcv", 
+                                                    number = 10, 
+                                                    repeats = 10, 
+                                                    savePredictions = TRUE, 
+                                                    verboseIter = FALSE))
+
+model_dermcor$finalModel$confusion
+imp <- model_dermcor$finalModel$importance
+imp[order(imp, decreasing = TRUE), ]
+
+# estimate variable importance
+importance <- varImp(model_dermcor, scale = TRUE)
+plot(importance)
+
+confusionMatrix(predict(model_dermcor, test_data_cor), test_data_cor$classes)
+
+resultscor <- data.frame(actual = test_data_cor$classes,
+                      predict(model_dermcor, test_data_cor, type = "prob"))
+
+resultscor$prediction <- ifelse(results$pityriasis_rosea > 1/6, "pityriasis_rosea",
+                             ifelse(results$chronic_dermatitis > 1/6, "chronic_dermatitis",
+                                    ifelse(results$lichen_planus > 1/6, "lichen_planus",
+                                           ifelse(results$pityriasis_rubra_pilaris > 1/6, "pityriasis_rubra_pilaris",
+                                                  ifelse(results$psoriasis > 1/6, "psoriasis","seboreic_dermatitis")))))
+
+
+resultscor$correct <- ifelse(results$actual == results$prediction, TRUE, FALSE)
+
+ggplot(resultscor, aes(x = prediction, fill = correct)) +
+  geom_bar(position = "dodge")
+
+ggplot(resultscor, aes(x = prediction, y = psoriasis, color = correct, shape = correct)) +
+  geom_jitter(size = 3, alpha = 0.6)
+
+ggplot(resultscor, aes(x = prediction, y = chronic_dermatitis, color = correct, shape = correct)) +
+  geom_jitter(size = 3, alpha = 0.6)
+
+ggplot(resultscor, aes(x = prediction, y = lichen_planus, color = correct, shape = correct)) +
+  geom_jitter(size = 3, alpha = 0.6)
+
+ggplot(results, aes(x = prediction, y = pityriasis_rubra_pilaris , color = correct, shape = correct)) +
+  geom_jitter(size = 3, alpha = 0.6)
+
+ggplot(resultscor, aes(x = prediction, y = pityriasis_rosea, color = correct, shape = correct)) +
+  geom_jitter(size = 3, alpha = 0.6)
+
+ggplot(resultscor, aes(x = prediction, y = seboreic_dermatitis, color = correct, shape = correct)) +
+  geom_jitter(size = 3, alpha = 0.6)
